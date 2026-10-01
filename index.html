@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Space Shooter</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;font-family:Tahoma,sans-serif;-webkit-tap-highlight-color:transparent}
+body{background:radial-gradient(circle at center,#0a0a2e 0%,#000010 100%);min-height:100vh;display:flex;justify-content:center;align-items:center;color:#fff;overflow:hidden;touch-action:none}
+.game-container{position:relative;width:100vw;max-width:480px}
+.hud{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(0,0,0,.6);border-radius:10px 10px 0 0;border:1px solid #00fff7;border-bottom:none;font-size:14px;font-weight:bold}
+.hud-item{color:#00fff7;text-shadow:0 0 8px #00fff7}
+.mute-btn{background:transparent;border:1px solid #00fff7;color:#00fff7;padding:5px 8px;border-radius:5px;font-size:12px}
+canvas{display:block;background:#000010;border:1px solid #00fff7;box-shadow:0 0 30px rgba(0,255,247,.5);width:100%;height:auto}
+.mobile-controls{display:flex;justify-content:space-between;align-items:center;padding:10px;gap:10px;margin-top:8px}
+.ctrl-btn{flex:1;padding:18px;font-size:24px;font-weight:bold;background:rgba(0,255,247,.15);color:#00fff7;border:2px solid #00fff7;border-radius:12px;box-shadow:0 0 15px rgba(0,255,247,.5);user-select:none;-webkit-user-select:none;touch-action:manipulation}
+.ctrl-btn:active{background:#00fff7;color:#000;transform:scale(.95)}
+.ctrl-btn.fire{background:rgba(255,56,96,.15);color:#ff3860;border-color:#ff3860;box-shadow:0 0 15px rgba(255,56,96,.5)}
+.ctrl-btn.fire:active{background:#ff3860;color:#fff}
+.overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,20,.95);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:15px;text-align:center;padding:20px;z-index:10}
+.overlay.hidden{display:none}
+.overlay h1{font-size:32px;color:#00fff7;text-shadow:0 0 20px #00fff7}
+.overlay p{font-size:15px;color:#a0e0ff}
+.btn{margin-top:15px;padding:12px 30px;font-size:18px;font-weight:bold;color:#000;background:#00fff7;border:none;border-radius:8px;box-shadow:0 0 20px #00fff7}
+</style>
+</head>
+<body>
+<div class="game-container">
+  <div class="hud">
+    <div class="hud-item">امتیاز: <span id="score">0</span></div>
+    <div class="hud-item">جان: <span id="lives">❤️❤️❤️</span></div>
+    <button id="muteBtn" class="mute-btn">🔊 صدا</button>
+  </div>
+  <canvas id="gameCanvas" width="480" height="640"></canvas>
+  <div class="mobile-controls">
+    <button class="ctrl-btn" id="btnLeft">◀</button>
+    <button class="ctrl-btn fire" id="btnFire">🔥</button>
+    <button class="ctrl-btn" id="btnRight">▶</button>
+  </div>
+</div>
+
+<div id="startScreen" class="overlay">
+  <h1>🚀 Space Shooter</h1>
+  <p>با دکمه‌های پایین بازی کن</p>
+  <p>◀ چپ | 🔥 شلیک | ▶ راست</p>
+  <button id="startBtn" class="btn">شروع بازی</button>
+</div>
+
+<div id="gameOverScreen" class="overlay hidden">
+  <h1>💥 Game Over</h1>
+  <p>امتیاز نهایی: <span id="finalScore">0</span></p>
+  <button id="restartBtn" class="btn">بازی مجدد</button>
+</div>
+
+<script>
+var AudioManager={
+  ctx:null,isMuted:false,musicInterval:null,
+  init:function(){if(!this.ctx)this.ctx=new(window.AudioContext||window.webkitAudioContext)()},
+  playShoot:function(){
+    if(this.isMuted||!this.ctx)return;
+    var osc=this.ctx.createOscillator(),gain=this.ctx.createGain();
+    osc.type='square';
+    osc.frequency.setValueAtTime(880,this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(220,this.ctx.currentTime+0.1);
+    gain.gain.setValueAtTime(0.08,this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+0.1);
+    osc.connect(gain).connect(this.ctx.destination);
+    osc.start();osc.stop(this.ctx.currentTime+0.1);
+  },
+  playExplosion:function(){
+    if(this.isMuted||!this.ctx)return;
+    var bufferSize=this.ctx.sampleRate*0.3;
+    var buffer=this.ctx.createBuffer(1,bufferSize,this.ctx.sampleRate);
+    var data=buffer.getChannelData(0);
+    for(var i=0;i<bufferSize;i++)data[i]=(Math.random()*2-1)*(1-i/bufferSize);
+    var source=this.ctx.createBufferSource();source.buffer=buffer;
+    var filter=this.ctx.createBiquadFilter();filter.type='lowpass';
+    filter.frequency.setValueAtTime(1000,this.ctx.currentTime);
+    filter.frequency.exponentialRampToValueAtTime(100,this.ctx.currentTime+0.3);
+    var gain=this.ctx.createGain();
+    gain.gain.setValueAtTime(0.15,this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001,this.ctx.currentTime+0.3);
+    source.connect(filter).connect(gain).connect(this.ctx.destination);
+    source.start();
+  },
+  startMusic:function(){
+    if(!this.ctx||this.isMuted)return;
+    this.stopMusic();
+    var notes=[220,277,330,277,220,165,220,277],index=0,self=this;
+    this.musicInterval=setInterval(function(){
+      if(self.isMuted||!self.ctx)return;
+      var osc=self.ctx.createOscillator(),gain=self.ctx.createGain();
+      osc.type='triangle';osc.frequency.value=notes[index%notes.length];
+      gain.gain.setValueAtTime(0.03,self.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001,self.ctx.currentTime+0.4);
+      osc.connect(gain).connect(self.ctx.destination);
+      osc.start();osc.stop(self.ctx.currentTime+0.4);
+      index++;
+    },400);
+  },
+  stopMusic:function(){if(this.musicInterval){clearInterval(this.musicInterval);this.musicInterval=null}},
+  toggleMute:function(){
+    this.isMuted=!this.isMuted;
+    muteBtn.textContent=this.isMuted?'🔇 صدا':'🔊 صدا';
+    if(this.isMuted)this.stopMusic();else if(game.isRunning)this.startMusic();
+  }
+};
+
+var canvas=document.getElementById('gameCanvas');
+var ctx=canvas.getContext('2d');
+var scoreEl=document.getElementById('score');
+var livesEl=document.getElementById('lives');
+var muteBtn=document.getElementById('muteBtn');
+var startScreen=document.getElementById('startScreen');
+var gameOverScreen=document.getElementById('gameOverScreen');
+var finalScoreEl=document.getElementById('finalScore');
+
+var keys={ArrowLeft:false,ArrowRight:false,Space:false};
+
+document.addEventListener('keydown',function(e){if(e.code in keys){keys[e.code]=true;e.preventDefault()}});
+document.addEventListener('keyup',function(e){if(e.code in keys){keys[e.code]=false;e.preventDefault()}});
+
+function Player(){
+  this.width=40;this.height=40;
+  this.x=canvas.width/2-20;this.y=canvas.height-70;
+  this.speed=6;this.cooldown=0;
+}
+Player.prototype.update=function(){
+  if(keys.ArrowLeft&&this.x>0)this.x-=this.speed;
+  if(keys.ArrowRight&&this.x<canvas.width-this.width)this.x+=this.speed;
+  if(this.cooldown>0)this.cooldown--;
+};
+Player.prototype.shoot=function(){
+  if(this.cooldown<=0&&keys.Space){
+    bullets.push(new Bullet(this.x+this.width/2-2,this.y));
+    AudioManager.playShoot();
+    this.cooldown=12;
+  }
+};
+Player.prototype.draw=function(){
+  ctx.fillStyle='#00fff7';ctx.shadowColor='#00fff7';ctx.shadowBlur=20;
+  ctx.beginPath();
+  ctx.moveTo(this.x+this.width/2,this.y);
+  ctx.lineTo(this.x,this.y+this.height);
+  ctx.lineTo(this.x+this.width,this.y+this.height);
+  ctx.closePath();ctx.fill();
+  ctx.shadowBlur=0;
+};
+
+function Bullet(x,y){
+  this.x=x;this.y=y;this.width=4;this.height=15;this.speed=9;
+}
+Bullet.prototype.update=function(){this.y-=this.speed};
+Bullet.prototype.draw=function(){
+  ctx.fillStyle='#ffff00';ctx.shadowColor='#ffff00';ctx.shadowBlur=15;
+  ctx.fillRect(this.x,this.y,this.width,this.height);
+  ctx.shadowBlur=0;
+};
+Bullet.prototype.isOffScreen=function(){return this.y+this.height<0};
+
+function Enemy(){
+  this.width=35;this.height=35;
+  this.x=Math.random()*(canvas.width-this.width);
+  this.y=-this.height;
+  this.speed=1.5+Math.random()*1.5;
+}
+Enemy.prototype.update=function(){this.y+=this.speed};
+Enemy.prototype.draw=function(){
+  ctx.fillStyle='#ff3860';ctx.shadowColor='#ff3860';ctx.shadowBlur=15;
+  ctx.fillRect(this.x,this.y,this.width,this.height);
+  ctx.shadowBlur=0;
+};
+Enemy.prototype.isOffScreen=function(){return this.y>canvas.height};
+
+var game={score:0,lives:3,isRunning:false,spawnTimer:0,spawnDelay:60};
+var player,bullets=[],enemies=[],animationId=null;
+
+function checkCollision(a,b){
+  return a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y;
+}
+function updateLivesDisplay(){
+  livesEl.textContent='❤️'.repeat(game.lives)||'💀';
+}
+function resetGame(){
+  game.score=0;game.lives=3;game.spawnTimer=0;game.spawnDelay=60;
+  scoreEl.textContent='0';
+  updateLivesDisplay();
+  player=new Player();bullets=[];enemies=[];
+}
+function gameOver(){
+  game.isRunning=false;
+  AudioManager.stopMusic();
+  AudioManager.playExplosion();
+  finalScoreEl.textContent=game.score;
+  gameOverScreen.classList.remove('hidden');
+  cancelAnimationFrame(animationId);
+}
+
+function gameLoop(){
+  if(!game.isRunning)return;
+  ctx.fillStyle='#000010';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  player.update();player.shoot();player.draw();
+  for(var i=bullets.length-1;i>=0;i--){
+    var b=bullets[i];b.update();b.draw();
+    if(b.isOffScreen())bullets.splice(i,1);
+  }
+  game.spawnTimer++;
+  if(game.spawnTimer>=game.spawnDelay){
+    enemies.push(new Enemy());
+    game.spawnTimer=0;
+    if(game.spawnDelay>20)game.spawnDelay-=0.5;
+  }
+  for(var i=enemies.length-1;i>=0;i--){
+    var e=enemies[i];e.update();e.draw();
+    if(checkCollision(player,e)){
+      enemies.splice(i,1);
+      game.lives--;updateLivesDisplay();
+      AudioManager.playExplosion();
+      if(game.lives<=0){gameOver();return}
+      continue;
+    }
+    if(e.isOffScreen()){enemies.splice(i,1);continue}
+    for(var j=bullets.length-1;j>=0;j--){
+      if(checkCollision(bullets[j],e)){
+        bullets.splice(j,1);enemies.splice(i,1);
+        game.score+=10;scoreEl.textContent=game.score;
+        AudioManager.playExplosion();
+        break;
+      }
+    }
+  }
+  animationId=requestAnimationFrame(gameLoop);
+}
+
+function startGame(){
+  AudioManager.init();
+  if(AudioManager.ctx.state==='suspended')AudioManager.ctx.resume();
+  AudioManager.startMusic();
+  resetGame();
+  game.isRunning=true;
+  startScreen.classList.add('hidden');
+  gameOverScreen.classList.add('hidden');
+  gameLoop();
+}
+
+document.getElementById('startBtn').addEventListener('click',startGame);
+document.getElementById('restartBtn').addEventListener('click',startGame);
+muteBtn.addEventListener('click',function(){AudioManager.toggleMute()});
+
+var btnLeft=document.getElementById('btnLeft');
+var btnRight=document.getElementById('btnRight');
+var btnFire=document.getElementById('btnFire');
+
+function bindButton(btn,key){
+  btn.addEventListener('touchstart',function(e){e.preventDefault();keys[key]=true});
+  btn.addEventListener('touchend',function(e){e.preventDefault();keys[key]=false});
+  btn.addEventListener('touchcancel',function(e){e.preventDefault();keys[key]=false});
+  btn.addEventListener('mousedown',function(){keys[key]=true});
+  btn.addEventListener('mouseup',function(){keys[key]=false});
+  btn.addEventListener('mouseleave',function(){keys[key]=false});
+}
+bindButton(btnLeft,'ArrowLeft');
+bindButton(btnRight,'ArrowRight');
+bindButton(btnFire,'Space');
+</script>
+</body>
+</html>
